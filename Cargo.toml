@@ -1,0 +1,11 @@
+[package]
+name = "datafusion-spatial"
+version = "0.1.0"
+authors = ["Balthasar Teuscher <balthasar.teuscher@gmail.com>"]
+edition = "2021"
+description = "Spatial extension for DataFusion"
+license = "Apache-2.0"
+keywords = ["geoparquet", "geoarrow", "datafusion"]
+
+
+[dependencies]
