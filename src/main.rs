@@ -4,13 +4,14 @@ use datafusion::{
     logical_expr::ScalarUDF,
     prelude::{ParquetReadOptions, SessionContext},
 };
-use datafusion_spatial::udfs::{AsText};
+use datafusion_spatial::udfs::{AsText, GeometryType};
 
 #[tokio::main]
 async fn main() -> datafusion::error::Result<()> {
     let ctx = SessionContext::new();
 
     ctx.register_udf(ScalarUDF::from(AsText::new()));
+    ctx.register_udf(ScalarUDF::from(GeometryType::new()));
 
     let path = "data/data-*_wkb.parquet";
 
@@ -25,7 +26,7 @@ async fn main() -> datafusion::error::Result<()> {
 
     let df = ctx
         .sql(&format!(
-            "SELECT col, ST_AsText(geometry) as wkt FROM '{table_name}'"
+            "SELECT col, ST_GeometryType(geometry) as geom_type, ST_AsText(geometry) as wkt FROM '{table_name}'"
         ))
         .await?;
 
