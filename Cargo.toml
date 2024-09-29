@@ -9,9 +9,9 @@ keywords = ["geoparquet", "geoarrow", "datafusion"]
 
 
 [dependencies]
-datafusion = { version = "41.0.0", default-features = false, features = ["parquet"] }
-geoarrow = { version = "0.3.0", default-features = false, features = ["geozero"] }
-geozero = { version = "0.13.0", default-features = false, features = ["with-wkb"] }
+datafusion = { version = "42.0.0", default-features = false, features = ["parquet"] }
+geoarrow = { version = "0.4.0-beta.1", default-features = false, features = ["parquet"] }
+serde_json = "1.0.128"
 tokio = { version = "1.40.0", features = ["full"] }
 
 [patch.crates-io]

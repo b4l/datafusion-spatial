@@ -7,11 +7,17 @@ use datafusion::{
     },
     error::DataFusionError,
     logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, TypeSignature, Volatility},
+    scalar::ScalarValue,
 };
 use geoarrow::{
-    array::WKBArray, error::GeoArrowError, io::wkb::WKBType, scalar::WKB,
-    trait_::NativeArrayAccessor,
+    array::WKBArray,
+    error::GeoArrowError,
+    io::{parquet::metadata::GeoParquetColumnEncoding, wkb::WKBType},
+    scalar::WKB,
+    trait_::ArrayAccessor,
 };
+
+use crate::udfs::helpers::{encoding, scalar_arg_as_str};
 
 /// `ST_GeometryType` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]
@@ -25,10 +31,7 @@ impl GeometryType {
     pub fn new() -> Self {
         Self {
             signature: Signature::one_of(
-                vec![
-                    TypeSignature::Exact(vec![DataType::Binary]),
-                    TypeSignature::Exact(vec![DataType::LargeBinary]),
-                ],
+                vec![TypeSignature::Any(1), TypeSignature::Any(3)],
                 Volatility::Immutable,
             ),
             aliases: vec!["st_geometrytype".to_string()],
@@ -37,7 +40,7 @@ impl GeometryType {
 }
 
 impl ScalarUDFImpl for GeometryType {
-    /// We implement as_any so that we can downcast the ScalarUDFImpl trait object
+    /// To downcast the ScalarUDFImpl trait object
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -52,9 +55,7 @@ impl ScalarUDFImpl for GeometryType {
         &self.signature
     }
 
-    /// What is the type of value that will be returned by this function? In
-    /// this case it will always be a constant value, but it could also be a
-    /// function of the input types.
+    /// The type of value that will be returned by this function.
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType, DataFusionError> {
         Ok(DataType::Utf8)
     }
@@ -63,39 +64,65 @@ impl ScalarUDFImpl for GeometryType {
     fn invoke(&self, args: &[ColumnarValue]) -> Result<ColumnarValue, DataFusionError> {
         // DataFusion has arranged for the correct inputs to be passed to this
         // function, but we check again to make sure
-        assert_eq!(args.len(), 1);
+        assert_eq!(args.len(), 3);
 
-        match &args[0].data_type() {
-            DataType::Binary => {
-                let geoms: WKBArray<i32> = match &args[0] {
-                    ColumnarValue::Scalar(geom) => WKBArray::try_from(geom.to_array()?.as_ref()),
-                    ColumnarValue::Array(binary_array) => WKBArray::try_from(binary_array.as_ref()),
+        let geoms = match &args[0] {
+            ColumnarValue::Array(array) => array,
+            ColumnarValue::Scalar(scalar) => &scalar.to_array()?,
+        };
+        let encoding = encoding(&args[1])?;
+        let geomtype = scalar_arg_as_str(&args[2])?;
+
+        match encoding {
+            GeoParquetColumnEncoding::WKB => match geoms.data_type() {
+                DataType::Binary => {
+                    let geoms: WKBArray<i32> = WKBArray::try_from(geoms.as_ref())
+                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+
+                    let array = geoms
+                        .iter()
+                        .map(wkb_geom_to_type)
+                        .collect::<Result<StringArray, DataFusionError>>()?;
+                    Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
                 }
-                .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                let array = geoms
-                    .iter()
-                    .map(wkb_geom_to_type)
-                    .collect::<Result<StringArray, DataFusionError>>()?;
+                DataType::LargeBinary => {
+                    let geoms: WKBArray<i64> = WKBArray::try_from(geoms.as_ref())
+                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
-            }
+                    let array = geoms
+                        .iter()
+                        .map(wkb_geom_to_type)
+                        .collect::<Result<StringArray, DataFusionError>>()?;
 
-            DataType::LargeBinary => {
-                let geoms: WKBArray<i64> = match &args[0] {
-                    ColumnarValue::Scalar(geom) => WKBArray::try_from(geom.to_array()?.as_ref()),
-                    ColumnarValue::Array(binary_array) => WKBArray::try_from(binary_array.as_ref()),
+                    Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
                 }
-                .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                let array = geoms
-                    .iter()
-                    .map(wkb_geom_to_type)
-                    .collect::<Result<StringArray, DataFusionError>>()?;
-
-                Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
+                _ => Err(DataFusionError::Internal(
+                    "Encoding `WKB` only valid with binary data type".to_string(),
+                )),
+            },
+            GeoParquetColumnEncoding::Point
+            | GeoParquetColumnEncoding::LineString
+            | GeoParquetColumnEncoding::Polygon
+            | GeoParquetColumnEncoding::MultiPoint
+            | GeoParquetColumnEncoding::MultiLineString
+            | GeoParquetColumnEncoding::MultiPolygon => {
+                let geometry_type = format!("ST_{}", geomtype.replace(' ', ""));
+                if geoms.as_ref().null_count() > 0 {
+                    Ok(ColumnarValue::Array(Arc::new(StringArray::from_iter(
+                        geoms
+                            .as_ref()
+                            .logical_nulls()
+                            .unwrap()
+                            .iter()
+                            .map(|is_valid| if is_valid { Some(&geometry_type) } else { None }),
+                    ))))
+                } else {
+                    Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
+                        geometry_type,
+                    ))))
+                }
             }
-            _ => unreachable!(),
         }
     }
 
