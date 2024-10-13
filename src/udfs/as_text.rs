@@ -6,19 +6,14 @@ use datafusion::{
     logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, TypeSignature, Volatility},
 };
 use geoarrow::{
-    array::{
-        LineStringArray, MultiLineStringArray, MultiPointArray, MultiPolygonArray, PointArray,
-        PolygonArray, SerializedArray, WKBArray,
-    },
+    array::{NativeArrayDyn, SerializedArray, WKBArray},
     error::GeoArrowError,
-    io::parquet::metadata::{GeoParquetColumnEncoding, GeoParquetGeometryType},
-    ArrayBase,
+    ArrayBase, NativeArray,
 };
 
-use crate::{
-    udfs::helpers::{encoding, geomtype},
-    wkt::array::ToWKT,
-};
+use crate::wkt::array::ToWKT;
+
+use super::helpers::{geom_type, native_type};
 
 /// `ST_AsText` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]
@@ -61,8 +56,8 @@ impl ScalarUDFImpl for AsText {
     /// function of the input types.
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType, DataFusionError> {
         match &arg_types[0] {
-            DataType::Binary => Ok(DataType::Utf8),              // wkt
-            DataType::LargeBinary => Ok(DataType::LargeUtf8),    // wkt
+            DataType::Binary => Ok(DataType::Utf8),              // WKB
+            DataType::LargeBinary => Ok(DataType::LargeUtf8),    // WKB
             DataType::List(_) => Ok(DataType::Utf8),             // geometries \ point
             DataType::FixedSizeList(_, _) => Ok(DataType::Utf8), // coords (interleaved)
             DataType::Struct(_) => Ok(DataType::Utf8),           // coords (separated)
@@ -83,125 +78,48 @@ impl ScalarUDFImpl for AsText {
             ColumnarValue::Array(array) => array,
             ColumnarValue::Scalar(scalar) => &scalar.to_array()?,
         };
-        let encoding = encoding(&args[1])?;
-        let geomtype = geomtype(&args[2])?;
+        let geomtype = geom_type(&args[1])?;
 
-        match encoding {
-            GeoParquetColumnEncoding::WKB => match &args[0].data_type() {
-                DataType::Binary => {
-                    let geoms: WKBArray<i32> = WKBArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+        match geoms.data_type() {
+            DataType::Binary => {
+                let geoms: WKBArray<i32> = WKBArray::try_from(geoms.as_ref())
+                    .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                    let wkt = geoms
-                        .as_ref()
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let wkt = geoms
+                    .as_ref()
+                    .to_wkt::<i32>()
+                    .map_err(|e| DataFusionError::Internal(e.to_string()))?;
 
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
+                Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
+            }
 
-                DataType::LargeBinary => {
-                    let geoms: WKBArray<i64> = WKBArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+            DataType::LargeBinary => {
+                let geoms: WKBArray<i64> = WKBArray::try_from(geoms.as_ref())
+                    .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                    let wkt = geoms
-                        .as_ref()
-                        .to_wkt::<i64>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let wkt = geoms
+                    .as_ref()
+                    .to_wkt::<i64>()
+                    .map_err(|e| DataFusionError::Internal(e.to_string()))?;
 
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                dt => Err(DataFusionError::Internal(format!(
-                    "Unsuported data type `{dt}` for WKB encoding"
-                ))),
-            },
+                Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
+            }
+            _ => {
+                let native_type = native_type(&args[0], geomtype);
 
-            GeoParquetColumnEncoding::Point => match geomtype {
-                GeoParquetGeometryType::Point => {
-                    let geoms: PointArray<2> = PointArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+                let geoms = NativeArrayDyn::from_arrow_array(
+                    &geoms,
+                    &native_type.to_field("geometry", true),
+                )
+                .unwrap();
 
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let wkt = geoms
+                    .as_ref()
+                    .to_wkt::<i32>()
+                    .map_err(|e| DataFusionError::Internal(e.to_string()))?;
 
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::PointZ => todo!(),
-                _ => panic!(),
-            },
-            GeoParquetColumnEncoding::LineString => match geomtype {
-                GeoParquetGeometryType::LineString => {
-                    let geoms: LineStringArray<2> = LineStringArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::LineStringZ => todo!(),
-                _ => panic!(),
-            },
-            GeoParquetColumnEncoding::Polygon => match geomtype {
-                GeoParquetGeometryType::Polygon => {
-                    let geoms: PolygonArray<2> = PolygonArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::PolygonZ => todo!(),
-                _ => panic!(),
-            },
-            GeoParquetColumnEncoding::MultiPoint => match geomtype {
-                GeoParquetGeometryType::MultiPoint => {
-                    let geoms: MultiPointArray<2> = MultiPointArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::MultiPointZ => todo!(),
-                _ => panic!(),
-            },
-            GeoParquetColumnEncoding::MultiLineString => match geomtype {
-                GeoParquetGeometryType::MultiLineString => {
-                    let geoms: MultiLineStringArray<2> =
-                        MultiLineStringArray::try_from(geoms.as_ref())
-                            .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::MultiLineStringZ => todo!(),
-                _ => panic!(),
-            },
-            GeoParquetColumnEncoding::MultiPolygon => match geomtype {
-                GeoParquetGeometryType::MultiPolygon => {
-                    let geoms: MultiPolygonArray<2> =
-                        MultiPolygonArray::try_from(geoms.as_ref())
-                            .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
-
-                    let wkt = geoms
-                        .to_wkt::<i32>()
-                        .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                    Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
-                }
-                GeoParquetGeometryType::MultiPolygonZ => todo!(),
-                _ => panic!(),
-            },
+                Ok(ColumnarValue::from(wkt.to_array_ref() as ArrayRef))
+            }
         }
     }
 

@@ -8,7 +8,7 @@ use datafusion::{
 
 use datafusion_spatial::{
     rules::SpatialAnalyzerRule,
-    udfs::{AsText, GeometryType},
+    udfs::{AsText, Envelope, GeometryType},
 };
 
 #[tokio::main]
@@ -19,14 +19,15 @@ async fn main() -> Result<()> {
 
     ctx.register_udf(ScalarUDF::from(AsText::new()));
     ctx.register_udf(ScalarUDF::from(GeometryType::new()));
+    ctx.register_udf(ScalarUDF::from(Envelope::new()));
 
     ctx.add_analyzer_rule(Arc::new(SpatialAnalyzerRule {}));
 
     for path in std::fs::read_dir(Path::new("data/")).unwrap() {
         let path = path.unwrap().path();
 
-        if !path.to_str().unwrap().ends_with(".parquet") {
-            println!("{path:?}");
+        let path_str = path.to_str().unwrap();
+        if !path_str.ends_with(".parquet") || path_str.contains("land_cover") {
             continue;
         }
 
@@ -45,15 +46,15 @@ async fn main() -> Result<()> {
 
         let df = ctx
             .sql(&format!(
-                "SELECT col, ST_GeometryType(geometry) as geom_type, ST_AsText(geometry) as wkt FROM '{}'",
-                table_name // arrow_typeof(geometry) ST_GeometryType(geometry) as geom_type, ST_AsText(geometry) as wkt
+                "SELECT ST_GeometryType(geometry) as geom_type, ST_Envelope(geometry) as envelope, ST_AsText(geometry) as wkt FROM '{}'",
+                table_name
             ))
             .await?;
 
         // println!("{}", df.logical_plan().display());
         // println!("{}", df.logical_plan().display_graphviz());
 
-        df.show().await?;
+        df.show_limit(5).await?;
     }
 
     Ok(())

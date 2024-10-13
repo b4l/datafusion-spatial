@@ -112,7 +112,7 @@ fn infer_geometry_encoding_and_type(
                                 2.. => lit("Mixed"),
                             };
 
-                            output = [encoding, geometry_type];
+                            output = [geometry_type, encoding];
 
                             return Ok(TreeNodeRecursion::Stop);
                         }

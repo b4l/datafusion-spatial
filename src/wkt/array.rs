@@ -19,8 +19,8 @@ pub trait ToWKT {
     fn to_wkt<O: OffsetSizeTrait>(&self) -> Result<WKTArray<O>, Error>;
 }
 
-/// Implementation that iterates over geo objects
-macro_rules! iter_impl {
+// Implementation that iterates over geo objects
+macro_rules! array_to_wkt_impl {
     ($type:ty, $func:ident) => {
         impl<const D: usize> ToWKT for $type {
             fn to_wkt<O: OffsetSizeTrait>(&self) -> Result<WKTArray<O>, Error> {
@@ -42,19 +42,17 @@ macro_rules! iter_impl {
     };
 }
 
-iter_impl!(PointArray<D>, point_to_wkt);
-iter_impl!(LineStringArray<D>, linestring_to_wkt);
-iter_impl!(PolygonArray<D>, polygon_to_wkt);
-iter_impl!(MultiPointArray<D>, multi_point_to_wkt);
-iter_impl!(MultiLineStringArray<D>, multi_linestring_to_wkt);
-iter_impl!(MultiPolygonArray<D>, multi_polygon_to_wkt);
-iter_impl!(MixedGeometryArray<D>, geometry_to_wkt);
-iter_impl!(GeometryCollectionArray<D>, geometry_collection_to_wkt);
-iter_impl!(RectArray<D>, rect_to_wkt);
+array_to_wkt_impl!(PointArray<D>, point_to_wkt);
+array_to_wkt_impl!(LineStringArray<D>, linestring_to_wkt);
+array_to_wkt_impl!(PolygonArray<D>, polygon_to_wkt);
+array_to_wkt_impl!(MultiPointArray<D>, multi_point_to_wkt);
+array_to_wkt_impl!(MultiLineStringArray<D>, multi_linestring_to_wkt);
+array_to_wkt_impl!(MultiPolygonArray<D>, multi_polygon_to_wkt);
+array_to_wkt_impl!(MixedGeometryArray<D>, geometry_to_wkt);
+array_to_wkt_impl!(GeometryCollectionArray<D>, geometry_collection_to_wkt);
+array_to_wkt_impl!(RectArray<D>, rect_to_wkt);
 
 impl ToWKT for &dyn NativeArray {
-    // type Output<O: OffsetSizeTrait> = Result<GenericStringArray<O>, Error>;
-
     fn to_wkt<O: OffsetSizeTrait>(&self) -> Result<WKTArray<O>, Error> {
         use Dimension::*;
         use NativeType::*;
@@ -83,8 +81,6 @@ impl ToWKT for &dyn NativeArray {
 }
 
 impl ToWKT for &dyn SerializedArray {
-    // type Output<O: OffsetSizeTrait> = Result<GenericStringArray<O>, Error>;
-
     fn to_wkt<O: OffsetSizeTrait>(&self) -> Result<WKTArray<O>, Error> {
         let mut wkt_builder: GenericStringBuilder<O> = GenericStringBuilder::new();
 

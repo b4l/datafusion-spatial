@@ -2,7 +2,7 @@ use std::fmt::{Error, Write};
 
 use geoarrow::geo_traits::*;
 
-/// Create geometry to WKT representation.
+// Create geometry to WKT representation.
 pub fn geometry_to_wkt<W: Write>(
     geometry: &impl GeometryTrait,
     writer: &mut W,
@@ -21,11 +21,22 @@ pub fn geometry_to_wkt<W: Write>(
     }
 }
 
-pub fn point_to_wkt<W: Write, P: PointTrait>(point: &P, writer: &mut W) -> Result<(), Error> {
+pub fn point_to_wkt<W: Write, G: PointTrait>(point: &G, writer: &mut W) -> Result<(), Error> {
     writer.write_str("POINT")?;
 
-    let x = point.x();
-    let y = point.y();
+    let (x, y) = point.x_y();
+
+    // hack for empty point
+    if num_traits::cast::<G::T, f64>(x)
+        .unwrap_or_default()
+        .is_nan()
+        && num_traits::cast::<G::T, f64>(x)
+            .unwrap_or_default()
+            .is_nan()
+    {
+        writer.write_str(" EMPTY")?;
+        return Ok(());
+    }
 
     if point.dim() == 3 {
         writer.write_str(" Z")?;
@@ -242,7 +253,7 @@ pub fn rect_to_wkt<W: Write>(rect: &impl RectTrait, writer: &mut W) -> Result<()
     Ok(())
 }
 
-fn add_coord<W: Write, C: CoordTrait>(writer: &mut W, coord: C) -> Result<(), Error> {
+fn add_coord<W: Write>(writer: &mut W, coord: impl CoordTrait) -> Result<(), Error> {
     // x y
     writer.write_fmt(format_args!("{:?} {:?}", coord.x(), coord.y()))?;
 
@@ -254,7 +265,7 @@ fn add_coord<W: Write, C: CoordTrait>(writer: &mut W, coord: C) -> Result<(), Er
     Ok(())
 }
 
-fn add_point<W: Write, P: PointTrait>(writer: &mut W, point: P) -> Result<(), Error> {
+fn add_point<W: Write>(writer: &mut W, point: impl PointTrait) -> Result<(), Error> {
     // x y
     writer.write_fmt(format_args!("({:?} {:?}", point.x(), point.y()))?;
 
@@ -268,9 +279,9 @@ fn add_point<W: Write, P: PointTrait>(writer: &mut W, point: P) -> Result<(), Er
     Ok(())
 }
 
-fn add_coords<W: Write, C: CoordTrait>(
+fn add_coords<W: Write>(
     writer: &mut W,
-    mut coords: impl Iterator<Item = C>,
+    mut coords: impl Iterator<Item = impl CoordTrait>,
 ) -> Result<(), Error> {
     writer.write_char('(')?;
 

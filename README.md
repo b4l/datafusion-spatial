@@ -13,7 +13,7 @@
 - [ ] ST_IsEmpty
 - [ ] ST_IsSimple
 - [ ] ST_Boundary
-- [ ] ST_Envelope
+- [x] ST_Envelope
 
 ### Spatial Relationships
 - [ ] ST_Equals

@@ -896,7 +896,9 @@ name = "datafusion-spatial"
 version = "0.1.0"
 dependencies = [
  "datafusion",
+ "geo",
  "geoarrow",
+ "num-traits",
  "serde_json",
  "tokio",
 ]
@@ -1150,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "geoarrow"
 version = "0.4.0-beta.1"
-source = "git+https://github.com/geoarrow/geoarrow-rs.git#697bb36df6423f41b5037a545e5288b90b6dbaed"
+source = "git+https://github.com/geoarrow/geoarrow-rs.git#d4e6957bd73f70f9d00a8b6b8c2d66f7c0622deb"
 dependencies = [
  "arrow",
  "arrow-array",

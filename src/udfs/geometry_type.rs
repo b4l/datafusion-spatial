@@ -10,14 +10,10 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use geoarrow::{
-    array::WKBArray,
-    error::GeoArrowError,
-    io::{parquet::metadata::GeoParquetColumnEncoding, wkb::WKBType},
-    scalar::WKB,
-    trait_::ArrayAccessor,
+    array::WKBArray, error::GeoArrowError, io::wkb::WKBType, scalar::WKB, trait_::ArrayAccessor,
 };
 
-use crate::udfs::helpers::{encoding, scalar_arg_as_str};
+use super::helpers::scalar_arg_as_str;
 
 /// `ST_GeometryType` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]
@@ -70,43 +66,32 @@ impl ScalarUDFImpl for GeometryType {
             ColumnarValue::Array(array) => array,
             ColumnarValue::Scalar(scalar) => &scalar.to_array()?,
         };
-        let encoding = encoding(&args[1])?;
-        let geomtype = scalar_arg_as_str(&args[2])?;
+        let geomtype = scalar_arg_as_str(&args[1])?;
 
-        match encoding {
-            GeoParquetColumnEncoding::WKB => match geoms.data_type() {
-                DataType::Binary => {
-                    let geoms: WKBArray<i32> = WKBArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+        match geoms.data_type() {
+            DataType::Binary => {
+                let geoms: WKBArray<i32> = WKBArray::try_from(geoms.as_ref())
+                    .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                    let array = geoms
-                        .iter()
-                        .map(wkb_geom_to_type)
-                        .collect::<Result<StringArray, DataFusionError>>()?;
-                    Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
-                }
+                let array = geoms
+                    .iter()
+                    .map(wkb_geom_to_type)
+                    .collect::<Result<StringArray, DataFusionError>>()?;
+                Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
+            }
 
-                DataType::LargeBinary => {
-                    let geoms: WKBArray<i64> = WKBArray::try_from(geoms.as_ref())
-                        .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
+            DataType::LargeBinary => {
+                let geoms: WKBArray<i64> = WKBArray::try_from(geoms.as_ref())
+                    .map_err(|e: GeoArrowError| DataFusionError::Internal(e.to_string()))?;
 
-                    let array = geoms
-                        .iter()
-                        .map(wkb_geom_to_type)
-                        .collect::<Result<StringArray, DataFusionError>>()?;
+                let array = geoms
+                    .iter()
+                    .map(wkb_geom_to_type)
+                    .collect::<Result<StringArray, DataFusionError>>()?;
 
-                    Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
-                }
-                _ => Err(DataFusionError::Internal(
-                    "Encoding `WKB` only valid with binary data type".to_string(),
-                )),
-            },
-            GeoParquetColumnEncoding::Point
-            | GeoParquetColumnEncoding::LineString
-            | GeoParquetColumnEncoding::Polygon
-            | GeoParquetColumnEncoding::MultiPoint
-            | GeoParquetColumnEncoding::MultiLineString
-            | GeoParquetColumnEncoding::MultiPolygon => {
+                Ok(ColumnarValue::from(Arc::new(array) as ArrayRef))
+            }
+            _ => {
                 let geometry_type = format!("ST_{}", geomtype.replace(' ', ""));
                 if geoms.as_ref().null_count() > 0 {
                     Ok(ColumnarValue::Array(Arc::new(StringArray::from_iter(
