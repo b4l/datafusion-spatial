@@ -7,7 +7,10 @@ use datafusion::{
     },
     config::ConfigOptions,
     error::{DataFusionError, Result},
-    logical_expr::{expr::ScalarFunction, LogicalPlan, TableScan},
+    logical_expr::{
+        expr::{AggregateFunction, ScalarFunction},
+        LogicalPlan, TableScan,
+    },
     optimizer::AnalyzerRule,
     parquet::errors::ParquetError,
     prelude::{lit, Expr},
@@ -62,14 +65,45 @@ impl AnalyzerRule for SpatialAnalyzerRule {
                         let expr = expr.transform_up(|expr| match &expr {
                             Expr::ScalarFunction(ScalarFunction { func, args }) => {
                                 if func.name().starts_with("ST_") {
+                                    let name = expr.name_for_alias()?;
                                     let mut args = args.to_owned();
-                                    args.extend_from_slice(&infer_geometry_encoding_and_type(
-                                        &expr, &geometa,
-                                    )?);
-                                    Ok(Transformed::no(Expr::ScalarFunction(ScalarFunction {
-                                        func: func.clone(),
-                                        args,
-                                    })))
+                                    let additions = infer_encoding_and_type(&expr, &geometa)?;
+                                    args.extend_from_slice(&additions);
+                                    Ok(Transformed::yes(
+                                        Expr::ScalarFunction(ScalarFunction {
+                                            func: func.clone(),
+                                            args,
+                                        })
+                                        .alias(name),
+                                    ))
+                                } else {
+                                    Ok(Transformed::no(expr))
+                                }
+                            }
+                            Expr::AggregateFunction(AggregateFunction {
+                                func,
+                                args,
+                                distinct,
+                                filter,
+                                order_by,
+                                null_treatment,
+                            }) => {
+                                if func.name().starts_with("ST_") {
+                                    let name = expr.name_for_alias()?;
+                                    let additions = infer_encoding_and_type(&expr, &geometa)?;
+                                    let mut args = args.to_owned();
+                                    args.extend_from_slice(&additions);
+                                    Ok(Transformed::yes(
+                                        Expr::AggregateFunction(AggregateFunction {
+                                            func: func.clone(),
+                                            args,
+                                            distinct: *distinct,
+                                            filter: filter.clone(),
+                                            order_by: order_by.clone(),
+                                            null_treatment: *null_treatment,
+                                        })
+                                        .alias(name),
+                                    ))
                                 } else {
                                     Ok(Transformed::no(expr))
                                 }
@@ -85,6 +119,7 @@ impl AnalyzerRule for SpatialAnalyzerRule {
             Ok(Transformed::no(transformed.data))
         })?;
 
+        // let plan = plan.data.recompute_schema()?;
         Ok(plan.data)
     }
 
@@ -93,42 +128,42 @@ impl AnalyzerRule for SpatialAnalyzerRule {
     }
 }
 
-fn infer_geometry_encoding_and_type(
+fn infer_encoding_and_type(
     expr: &Expr,
     geometa: &HashMap<String, GeoParquetMetadata>,
 ) -> Result<[Expr; 2]> {
     let mut output: [Expr; 2] = Default::default();
 
-    expr.apply(|expr| {
-        match &expr {
-            Expr::Column(Column { relation, name }) => {
-                if let Some(table_reference) = relation {
-                    if let Some(meta) = geometa.get(table_reference.table()) {
-                        if let Some(column) = meta.columns.get(name.as_str()) {
-                            let encoding = lit(column.encoding.to_string());
-                            let geometry_type = match column.geometry_types.len() {
-                                0 => lit("Unknown"),
-                                1 => lit(column.geometry_types.iter().next().unwrap().to_string()),
-                                2.. => lit("Mixed"),
-                            };
+    expr.apply_children(|expr| match &expr {
+        Expr::Column(Column { relation, name }) => {
+            if let Some(table_reference) = relation {
+                if let Some(meta) = geometa.get(table_reference.table()) {
+                    if let Some(column) = meta.columns.get(name.as_str()) {
+                        let encoding = lit(column.encoding.to_string());
+                        let geometry_type = match column.geometry_types.len() {
+                            0 => lit("Unknown"),
+                            1 => lit(column.geometry_types.iter().next().unwrap().to_string()),
+                            2.. => lit("Mixed"),
+                        };
 
-                            output = [geometry_type, encoding];
+                        output = [geometry_type, encoding];
 
-                            return Ok(TreeNodeRecursion::Stop);
-                        }
+                        return Ok(TreeNodeRecursion::Stop);
                     }
                 }
-                Ok(TreeNodeRecursion::Continue)
             }
-            // Expr::ScalarFunction(ScalarFunction { func, args }) => {
-            //     if func.name().starts_with("ST_") {
-            //         "ST_AsText" => println!("UDF: ST_AsText"),
-            //         _ => todo!()
-            //     }
-            //     Ok(Transformed::no(expr))
-            // }
-            _ => Ok(TreeNodeRecursion::Continue),
+            Ok(TreeNodeRecursion::Continue)
         }
+        Expr::ScalarFunction(ScalarFunction { func, args: _ }) => {
+            if func.name().starts_with("ST_") {
+                match func.name() {
+                    "ST_Envelope" => output = [lit("Polygon"), lit("polygon")],
+                    st => todo!("io mapping for {st}"),
+                }
+            }
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        _ => Ok(TreeNodeRecursion::Continue),
     })?;
 
     Ok(output)

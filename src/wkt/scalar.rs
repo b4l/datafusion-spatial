@@ -1,6 +1,6 @@
 use std::fmt::{Error, Write};
 
-use geoarrow::geo_traits::*;
+use geo_traits::*;
 
 // Create geometry to WKT representation.
 pub fn geometry_to_wkt<W: Write>(
@@ -18,38 +18,19 @@ pub fn geometry_to_wkt<W: Write>(
         MultiPolygon(multi_polygon) => multi_polygon_to_wkt(multi_polygon, writer),
         GeometryCollection(gc) => geometry_collection_to_wkt(gc, writer),
         Rect(rect) => rect_to_wkt(rect, writer),
+        Triangle(_) | Line(_) => todo!(),
     }
 }
 
-pub fn point_to_wkt<W: Write, G: PointTrait>(point: &G, writer: &mut W) -> Result<(), Error> {
+pub fn point_to_wkt<W: Write>(point: &impl PointTrait, writer: &mut W) -> Result<(), Error> {
     writer.write_str("POINT")?;
 
-    let (x, y) = point.x_y();
-
-    // hack for empty point
-    if num_traits::cast::<G::T, f64>(x)
-        .unwrap_or_default()
-        .is_nan()
-        && num_traits::cast::<G::T, f64>(x)
-            .unwrap_or_default()
-            .is_nan()
-    {
+    if point.coord().is_some() {
+        let n = add_dimension(writer, point.dim())?;
+        add_point(writer, point, n)?;
+    } else {
         writer.write_str(" EMPTY")?;
-        return Ok(());
     }
-
-    if point.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
-    writer.write_fmt(format_args!(" ({x:?} {y:?}"))?;
-
-    // z .. n
-    for nth in 2..point.dim() {
-        writer.write_fmt(format_args!(" {:?}", point.nth_unchecked(nth)))?;
-    }
-
-    writer.write_char(')')?;
 
     Ok(())
 }
@@ -58,16 +39,13 @@ pub fn linestring_to_wkt<W: Write>(
     linestring: &impl LineStringTrait,
     writer: &mut W,
 ) -> Result<(), Error> {
-    writer.write_str("LINESTRING ")?;
+    writer.write_str("LINESTRING")?;
 
-    if linestring.dim() == 3 {
-        writer.write_str("Z ")?;
-    }
-
-    if linestring.num_coords() != 0 {
-        add_coords(writer, linestring.coords())?;
+    if linestring.num_coords() > 0 {
+        let n = add_dimension(writer, linestring.dim())?;
+        add_coords(writer, linestring.coords(), n)?;
     } else {
-        writer.write_str("EMPTY")?;
+        writer.write_str(" EMPTY")?;
     }
 
     Ok(())
@@ -76,29 +54,25 @@ pub fn linestring_to_wkt<W: Write>(
 pub fn polygon_to_wkt<W: Write>(polygon: &impl PolygonTrait, writer: &mut W) -> Result<(), Error> {
     writer.write_str("POLYGON")?;
 
-    if polygon.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
     if let Some(exterior) = polygon.exterior() {
-        if exterior.num_coords() != 0 {
-            writer.write_str(" (")?;
-            add_coords(writer, exterior.coords())?;
+        if exterior.num_coords() > 0 {
+            let n = add_dimension(writer, exterior.dim())?;
+
+            writer.write_char('(')?;
+
+            add_coords(writer, exterior.coords(), n)?;
+            for interior in polygon.interiors() {
+                writer.write_char(',')?;
+                add_coords(writer, interior.coords(), n)?;
+            }
+
+            writer.write_char(')')?;
         } else {
             writer.write_str(" EMPTY")?;
-            return Ok(());
         }
     } else {
         writer.write_str(" EMPTY")?;
-        return Ok(());
     };
-
-    for interior in polygon.interiors() {
-        writer.write_char(',')?;
-        add_coords(writer, interior.coords())?;
-    }
-
-    writer.write_char(')')?;
 
     Ok(())
 }
@@ -109,20 +83,17 @@ pub fn multi_point_to_wkt<W: Write>(
 ) -> Result<(), Error> {
     writer.write_str("MULTIPOINT")?;
 
-    if multi_point.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
     let mut points = multi_point.points();
 
     if let Some(first) = points.next() {
-        writer.write_str(" (")?;
+        let n = add_dimension(writer, multi_point.dim())?;
 
-        add_point(writer, first)?;
+        writer.write_char('(')?;
 
+        add_point(writer, &first, n)?;
         for point in points {
             writer.write_char(',')?;
-            add_point(writer, point)?;
+            add_point(writer, &point, n)?;
         }
 
         writer.write_char(')')?;
@@ -139,19 +110,17 @@ pub fn multi_linestring_to_wkt<W: Write>(
 ) -> Result<(), Error> {
     writer.write_str("MULTILINESTRING")?;
 
-    if multi_linestring.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
-    let mut lines = multi_linestring.lines();
+    let mut lines = multi_linestring.line_strings();
 
     if let Some(linestring) = lines.next() {
-        writer.write_str(" (")?;
-        add_coords(writer, linestring.coords())?;
+        let n = add_dimension(writer, multi_linestring.dim())?;
 
+        writer.write_char('(')?;
+
+        add_coords(writer, linestring.coords(), n)?;
         for linestring in lines {
             writer.write_char(',')?;
-            add_coords(writer, linestring.coords())?;
+            add_coords(writer, linestring.coords(), n)?;
         }
 
         writer.write_char(')')?;
@@ -168,28 +137,26 @@ pub fn multi_polygon_to_wkt<W: Write>(
 ) -> Result<(), Error> {
     writer.write_str("MULTIPOLYGON")?;
 
-    if multi_polygon.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
     let mut polygons = multi_polygon.polygons();
 
     if let Some(polygon) = polygons.next() {
-        writer.write_str(" ((")?;
+        let n = add_dimension(writer, multi_polygon.dim())?;
 
-        add_coords(writer, polygon.exterior().unwrap().coords())?;
+        writer.write_str("((")?;
+
+        add_coords(writer, polygon.exterior().unwrap().coords(), n)?;
         for interior in polygon.interiors() {
             writer.write_char(',')?;
-            add_coords(writer, interior.coords())?;
+            add_coords(writer, interior.coords(), n)?;
         }
 
         for polygon in polygons {
             writer.write_str("),(")?;
 
-            add_coords(writer, polygon.exterior().unwrap().coords())?;
+            add_coords(writer, polygon.exterior().unwrap().coords(), n)?;
             for interior in polygon.interiors() {
                 writer.write_char(',')?;
-                add_coords(writer, interior.coords())?;
+                add_coords(writer, interior.coords(), n)?;
             }
         }
 
@@ -207,14 +174,12 @@ pub fn geometry_collection_to_wkt<W: Write>(
 ) -> Result<(), Error> {
     writer.write_str("GEOMETRYCOLLECTION")?;
 
-    if gc.dim() == 3 {
-        writer.write_str(" Z")?;
-    }
-
     let mut geometries = gc.geometries();
 
     if let Some(first) = geometries.next() {
-        writer.write_str(" (")?;
+        let _n = add_dimension(writer, gc.dim())?;
+
+        writer.write_char('(')?;
 
         geometry_to_wkt(&first, writer)?;
 
@@ -232,47 +197,60 @@ pub fn geometry_collection_to_wkt<W: Write>(
 }
 
 pub fn rect_to_wkt<W: Write>(rect: &impl RectTrait, writer: &mut W) -> Result<(), Error> {
-    writer.write_str("POLYGON")?;
+    let min = rect.min();
+    let max = rect.max();
 
-    let lower = rect.lower();
-    let upper = rect.upper();
-
-    match rect.dim() {
-        2 => writer.write_fmt(format_args!(
-            " ({0:?} {1:?},{2:?} {1:?},{2:?} {3:?},{0:?} {3:?},{0:?} {1:?})",
-            lower.x(),
-            lower.y(),
-            upper.x(),
-            upper.y(),
-        ))?,
-        3 => todo!("cube as polygon / linestring / multipoint?"),
-
-        _ => unimplemented!(),
-    };
+    write!(
+        writer,
+        "POLYGON ({0:?} {1:?},{2:?} {1:?},{2:?} {3:?},{0:?} {3:?},{0:?} {1:?})",
+        min.x(),
+        min.y(),
+        max.x(),
+        max.y(),
+    )?;
 
     Ok(())
 }
 
-fn add_coord<W: Write>(writer: &mut W, coord: impl CoordTrait) -> Result<(), Error> {
-    // x y
-    writer.write_fmt(format_args!("{:?} {:?}", coord.x(), coord.y()))?;
+fn add_dimension(writer: &mut impl Write, dims: Dimensions) -> Result<usize, Error> {
+    match dims {
+        Dimensions::Xy => {
+            writer.write_char(' ')?;
+            Ok(2)
+        }
+        Dimensions::Xyz => {
+            writer.write_str(" Z ")?;
+            Ok(3)
+        }
+        Dimensions::Xym => {
+            writer.write_str(" M ")?;
+            Ok(3)
+        }
+        Dimensions::Xyzm => {
+            writer.write_str(" ZM ")?;
+            Ok(4)
+        }
+        Dimensions::Unknown(n) => {
+            writer.write_char(' ')?;
+            Ok(n)
+        }
+    }
+}
 
-    // z .. n
-    for nth in 2..coord.dim() {
-        writer.write_fmt(format_args!(" {:?}", coord.nth_unchecked(nth)))?;
+fn add_coord(writer: &mut impl Write, coord: impl CoordTrait, n: usize) -> Result<(), Error> {
+    write!(writer, "{:?}", coord.nth_unchecked(0))?;
+
+    for nth in 1..n {
+        write!(writer, " {:?}", coord.nth_unchecked(nth))?;
     }
 
     Ok(())
 }
 
-fn add_point<W: Write>(writer: &mut W, point: impl PointTrait) -> Result<(), Error> {
-    // x y
-    writer.write_fmt(format_args!("({:?} {:?}", point.x(), point.y()))?;
+fn add_point(writer: &mut impl Write, point: &impl PointTrait, n: usize) -> Result<(), Error> {
+    writer.write_char('(')?;
 
-    // z .. n
-    for nth in 2..point.dim() {
-        writer.write_fmt(format_args!(" {:?}", point.nth_unchecked(nth)))?;
-    }
+    add_coord(writer, point.coord().unwrap(), n)?;
 
     writer.write_char(')')?;
 
@@ -282,15 +260,16 @@ fn add_point<W: Write>(writer: &mut W, point: impl PointTrait) -> Result<(), Err
 fn add_coords<W: Write>(
     writer: &mut W,
     mut coords: impl Iterator<Item = impl CoordTrait>,
+    n: usize,
 ) -> Result<(), Error> {
     writer.write_char('(')?;
 
     let first = coords.next().unwrap();
-    add_coord(writer, first)?;
+    add_coord(writer, first, n)?;
 
     for coord in coords {
         writer.write_char(',')?;
-        add_coord(writer, coord)?;
+        add_coord(writer, coord, n)?;
     }
 
     writer.write_char(')')?;

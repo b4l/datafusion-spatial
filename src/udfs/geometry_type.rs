@@ -13,7 +13,7 @@ use geoarrow::{
     array::WKBArray, error::GeoArrowError, io::wkb::WKBType, scalar::WKB, trait_::ArrayAccessor,
 };
 
-use super::helpers::scalar_arg_as_str;
+use crate::helpers::scalar_arg_as_str;
 
 /// `ST_GeometryType` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]

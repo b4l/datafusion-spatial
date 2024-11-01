@@ -1,11 +1,7 @@
 use std::any::Any;
 
 use datafusion::{
-    arrow::{
-        array::{ArrayRef, Float64Array},
-        buffer::OffsetBuffer,
-        datatypes::DataType,
-    },
+    arrow::{array::ArrayRef, buffer::OffsetBuffer, datatypes::DataType},
     error::DataFusionError,
     logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, TypeSignature, Volatility},
 };
@@ -23,7 +19,10 @@ use geoarrow::{
     ArrayBase, NativeArray,
 };
 
-use super::helpers::{coord_type, geom_type, native_type};
+use crate::{
+    compute::min_max_2d,
+    helpers::{coord_type, geom_type, native_type},
+};
 
 /// `ST_Envelope` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]
@@ -234,9 +233,7 @@ fn point_coord_buffer<const D: usize>(
 ) -> Option<CoordBuffer<D>> {
     if array.is_valid(index) {
         // hack for empty point
-        if (array.coords().get_x(index) as f64).is_nan()
-            && (array.coords().get_y(index) as f64).is_nan()
-        {
+        if array.coords().get_x(index).is_nan() && array.coords().get_y(index).is_nan() {
             Some(array.coords().slice(index, 0))
         } else {
             Some(array.coords().slice(index, 1))
@@ -338,45 +335,7 @@ fn envelope<const D: usize>(coords: &CoordBuffer<D>) -> OwnedPolygon<2> {
         );
     }
 
-    let ((xmin, ymin), (xmax, ymax)) = match coords {
-        CoordBuffer::Interleaved(coords) => coords.coords().chunks(D).fold(
-            (
-                (f64::INFINITY, f64::INFINITY),
-                (f64::NEG_INFINITY, f64::NEG_INFINITY),
-            ),
-            |((mut xmin, mut ymin), (mut xmax, mut ymax)), coord| {
-                let x = coord[0];
-                let y = coord[1];
-
-                if x < xmin {
-                    xmin = x;
-                } else if x > xmax {
-                    xmax = x;
-                }
-
-                if y < ymin {
-                    ymin = y;
-                } else if y > ymax {
-                    ymax = y;
-                }
-
-                ((xmin, ymin), (xmax, ymax))
-            },
-        ),
-        CoordBuffer::Separated(coords) => {
-            let xcoords = coords.coords()[0].clone();
-            let ycoords = coords.coords()[1].clone();
-
-            use datafusion::arrow::compute::{max, min};
-
-            let xmin = min(&Float64Array::try_new(xcoords.clone(), None).unwrap()).unwrap();
-            let ymin = min(&Float64Array::try_new(ycoords.clone(), None).unwrap()).unwrap();
-            let xmax = max(&Float64Array::try_new(xcoords.clone(), None).unwrap()).unwrap();
-            let ymax = max(&Float64Array::try_new(ycoords.clone(), None).unwrap()).unwrap();
-
-            ((xmin, ymin), (xmax, ymax))
-        }
-    };
+    let ((xmin, ymin), (xmax, ymax)) = min_max_2d(coords, false);
 
     let envelope_coords = SeparatedCoordBufferBuilder::from_vecs([
         vec![xmin, xmax, xmax, xmin, xmin],

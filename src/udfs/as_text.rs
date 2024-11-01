@@ -11,9 +11,10 @@ use geoarrow::{
     ArrayBase, NativeArray,
 };
 
-use crate::wkt::array::ToWKT;
-
-use super::helpers::{geom_type, native_type};
+use crate::{
+    helpers::{geom_type, native_type},
+    wkt::array::ToWKT,
+};
 
 /// `ST_AsText` user defined function (UDF) implementation.
 #[derive(Debug, Clone)]

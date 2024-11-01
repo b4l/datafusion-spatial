@@ -37,3 +37,7 @@
 - [ ] ST_SymDifference
 - [ ] ST_Buffer
 - [ ] ST_ConvexHull
+
+### Aggregation Operations
+
+- [x] ST_Extent
